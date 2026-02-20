@@ -4,8 +4,20 @@ set -e
 
 echo "===== GPU Deployment Script ====="
 
-read -p "Enter Backend GitHub repository URL: " BACKEND_REPO
-read -p "Enter Frontend GitHub repository URL: " FRONTEND_REPO
+# ===============================
+# GITHUB AUTH INPUT
+# ===============================
+
+read -p "Enter Backend GitHub repository (owner/repo): " BACKEND_REPO_PATH
+read -p "Enter Frontend GitHub repository (owner/repo): " FRONTEND_REPO_PATH
+
+read -p "Enter GitHub username: " GITHUB_USER
+read -s -p "Enter GitHub PAT (hidden): " GITHUB_PAT
+echo ""
+
+# ===============================
+# PROJECT CONFIG
+# ===============================
 
 read -p "Enter backend folder name (default: backend): " BACKEND_DIR
 BACKEND_DIR=${BACKEND_DIR:-backend}
@@ -23,8 +35,12 @@ NODE_VERSION="v20.11.1"
 
 echo "Updating system..."
 apt update
+apt install -y python3 python3-venv python3-pip git curl build-essential
 
-# ===== INSTALL NODE =====
+# ===============================
+# INSTALL NODE
+# ===============================
+
 if ! command -v node &> /dev/null
 then
     echo "Installing Node..."
@@ -35,23 +51,36 @@ then
     echo 'export PATH=$PATH:/usr/local/node/bin' >> ~/.bashrc
 fi
 
-# ===== INSTALL PM2 =====
+# ===============================
+# INSTALL PM2
+# ===============================
+
 if ! command -v pm2 &> /dev/null
 then
     npm install -g pm2
 fi
 
-# ===== CLONE BACKEND =====
+# ===============================
+# CLONE REPOSITORIES
+# ===============================
+
+echo "Cloning backend..."
 if [ ! -d "$BACKEND_DIR" ]; then
-    git clone $BACKEND_REPO $BACKEND_DIR
+    git clone https://${GITHUB_USER}:${GITHUB_PAT}@github.com/${BACKEND_REPO_PATH}.git $BACKEND_DIR
 fi
 
-# ===== CLONE FRONTEND =====
+echo "Cloning frontend..."
 if [ ! -d "$FRONTEND_DIR" ]; then
-    git clone $FRONTEND_REPO $FRONTEND_DIR
+    git clone https://${GITHUB_USER}:${GITHUB_PAT}@github.com/${FRONTEND_REPO_PATH}.git $FRONTEND_DIR
 fi
 
-# ===== BACKEND SETUP =====
+# Clear sensitive variable
+unset GITHUB_PAT
+
+# ===============================
+# BACKEND SETUP
+# ===============================
+
 echo "Setting up backend..."
 cd $BACKEND_DIR
 
@@ -63,13 +92,14 @@ source venv/bin/activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# Transformers compatibility fix
 pip install "transformers==4.47.1" "diffusers==0.32.2" "huggingface_hub>=0.26.0"
 
 cd ..
 
-# ===== FRONTEND SETUP =====
+# ===============================
+# FRONTEND SETUP
+# ===============================
+
 echo "Setting up frontend..."
 cd $FRONTEND_DIR
 
@@ -78,18 +108,25 @@ npm run build
 
 cd ..
 
-# ===== START SERVICES =====
+# ===============================
+# START SERVICES
+# ===============================
+
 pm2 delete all || true
 
 echo "Starting backend..."
-pm2 start "$BACKEND_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT" --name gpu-backend
+pm2 start $BACKEND_DIR/venv/bin/uvicorn \
+    --name gpu-backend \
+    -- main:app --host 0.0.0.0 --port $BACKEND_PORT
 
 echo "Starting frontend..."
-pm2 start "cd $FRONTEND_DIR && npm run preview -- --host 0.0.0.0 --port $FRONTEND_PORT" --name gpu-frontend
+pm2 start npm \
+    --name gpu-frontend \
+    --prefix $FRONTEND_DIR -- run preview -- --host 0.0.0.0 --port $FRONTEND_PORT
 
 pm2 save
 
 echo "===== Deployment Complete ====="
 echo "Backend running on port $BACKEND_PORT"
 echo "Frontend running on port $FRONTEND_PORT"
-echo "Use RunPod networking panel to access exposed ports."
+echo "Expose ports in RunPod networking panel."
